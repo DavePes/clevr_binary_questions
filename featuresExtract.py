@@ -47,11 +47,43 @@ def extract_features(location,batch_size=200):
 
     print(f"Features saved in {save_dir}")
    
-if __name__ == '__main__':
-    # Ensure all imports and initializations happen inside the main block
-    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    model.eval()  # Set CLIP to evaluation mode
 
-    # Run feature extraction for the validation set in batches of 200
-    extract_features("train", batch_size=500)
+def consolidate_features(location):
+    feature_dir = f"features/{location}"
+    binary_q = ql.load_binary_q(location)
+    answers = [q[1][1] for q in binary_q]
+    labels = np.array(answers) == 'yes'
+    num_samples = len(labels)
+
+    # Assuming all features have the same shape
+    image_shape = np.load(os.path.join(feature_dir, "image_0.npy")).shape
+    text_shape = np.load(os.path.join(feature_dir, "text_0.npy")).shape
+
+    image_features = np.zeros((num_samples, *image_shape), dtype=np.float32)
+    text_features = np.zeros((num_samples, *text_shape), dtype=np.float32)
+
+    for i in range(num_samples):
+        image_path = os.path.join(feature_dir, f"image_{i}.npy")
+        text_path = os.path.join(feature_dir, f"text_{i}.npy")
+        if os.path.exists(image_path) and os.path.exists(text_path):
+            image_features[i] = np.load(image_path)
+            text_features[i] = np.load(text_path)
+
+    np.savez_compressed(
+        os.path.join(feature_dir, "consolidated_features.npz"),
+        image_features=image_features,
+        text_features=text_features,
+        labels=labels
+    )
+if __name__ == '__main__':
+    # # Ensure all imports and initializations happen inside the main block
+    # model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    # processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    # model.eval()  # Set CLIP to evaluation mode
+
+    # # Run feature extraction for the validation set in batches of 200
+    # extract_features("train", batch_size=150)
+    # extract_features('val', batch_size=150)
+    # Call this once to consolidate features
+    consolidate_features("train")
+    consolidate_features("val")
