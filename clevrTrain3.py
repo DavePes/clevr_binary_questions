@@ -1,147 +1,158 @@
 import os
-os.environ.setdefault("KERAS_BACKEND", "torch")  # Use PyTorch backend unless specified otherwise
-from keras.layers import Input, Dense, Concatenate,Dropout
-from keras.models import Model
-import keras
 import numpy as np
-import torch
-from questionLoading import BinaryQuestionHandler as ql
-from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
-import torchmetrics
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer, AutoModel
+
+# Custom Dataset for PyTorch
+class FeatureDataset(Dataset):
+    def __init__(self, image_features, text_inputs, labels):
+        self.image_features = torch.tensor(image_features, dtype=torch.float32)
+        self.text_inputs = text_inputs  # Expecting a dictionary with 'input_ids' and 'attention_mask'
+        self.labels = torch.tensor(labels, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return (self.image_features[idx], 
+                self.text_inputs['input_ids'][idx], 
+                self.text_inputs['attention_mask'][idx], 
+                self.labels[idx])
+
+# Function to load features
 def load_features(location):
     data = np.load(f"features/{location}/consolidated_features.npz")
-    return data["image_features"], data["text_features"], data["labels"]
+    questions = np.load(f"raw/{location}/data.npz", allow_pickle=True)['questions'][:, 0]
+    return data["image_features"], questions, data["labels"]
+
+# Define the classifier model
+class Classifier(nn.Module):
+    def __init__(self, image_dim, text_dim, hidden_dim=400, dropout_rate=0.25):
+        super(Classifier, self).__init__()
+        self.fc1 = nn.Linear(image_dim + text_dim, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.bn2 = nn.BatchNorm1d(hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+        self.bn3 = nn.BatchNorm1d(hidden_dim)
+        self.output = nn.Linear(hidden_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(self, image_features, text_features):
+        x = torch.cat((image_features, text_features), dim=1)
+        x = self.fc1(x)
+        x = self.bn1(x)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = self.bn2(x)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        x = self.fc3(x)
+        x = self.bn3(x)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        x = self.output(x)
+        return torch.sigmoid(x)
+
+def compute_accuracy(predictions, labels):
+    # Threshold the sigmoid outputs at 0.5 to get binary predictions
+    predicted_labels = (predictions >= 0.5).float()
+    correct = (predicted_labels == labels).float()
+    accuracy = correct.sum() / correct.size(0)
+    return accuracy
 
 def main():
-    def process_text_embeddings(input_texts, output_file, batch_size=200):
-        # Check if the embeddings file already exists
-        if os.path.exists(output_file):
-            print(f"Loading embeddings from {output_file}")
-            data = np.load(output_file)
-            return data['text_features']  # Return the saved embeddings
-        
-        # If the embeddings file does not exist, generate them in batches
-        print(f"Generating text embeddings and saving to {output_file}")
-        
-        num_samples = len(input_texts)
-        all_embeddings = []  # List to store embeddings
-        
-        # Process in batches to avoid memory overload
-        for start_idx in tqdm(range(0, num_samples, batch_size)):
-            end_idx = min(start_idx + batch_size, num_samples)
-            batch_texts = input_texts[start_idx:end_idx]
-            
-            # Tokenize the batch of texts
-            inputs = tokenizer(batch_texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
-            
-            # Run the batch through the DistilBERT model
-            with torch.no_grad():
-                outputs = model(**inputs)
-                embeddings = outputs.last_hidden_state.mean(dim=1).cpu().numpy()  # Take mean of token embeddings
-                
-            # Append batch embeddings to the list
-            all_embeddings.append(embeddings)
-        
-        # Concatenate all embeddings into a single numpy array
-        all_embeddings = np.vstack(all_embeddings)
-        
-        # Save the embeddings as a .npz file
-        np.savez(output_file, text_features=all_embeddings)
-        
-        print(f"Embeddings saved to {output_file}")
-        return all_embeddings
-
-    # Define the classifier model
-    def build_classifier(image_dim,text_dim,dropout_rate=0.25):
-        # Inputs for image and text features
-        image_input = Input(shape=(image_dim,), name="image_input")
-        text_input = Input(shape=(text_dim,), name="text_input")
-        
-        # Combine features using Concatenate
-        concatenated = Concatenate()([image_input, text_input])
-        
-        x = Dense(400)(concatenated) 
-        x = keras.layers.BatchNormalization()(x) 
-        x = keras.activations.relu(x)
-        x = Dropout(dropout_rate)(x)
-        x = Dense(400)(concatenated) 
-        x = keras.layers.BatchNormalization()(x) 
-        x = keras.activations.relu(x) 
-        x = Dropout(dropout_rate)(x)
-        x = Dense(400)(concatenated) 
-        x = keras.layers.BatchNormalization()(x) 
-        x = keras.activations.relu(x) 
-        x = Dropout(dropout_rate)(x)
-        output = Dense(1, activation="sigmoid", name="output")(x)  # Binary classification output
-        
-        # Define the model
-        model = Model(inputs=[image_input, text_input], outputs=output)
-        return model
-    # Load pre-trained DistilBERT
+    # Load DistilBERT
     tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
-    model = AutoModel.from_pretrained('distilbert-base-uncased')
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)  
-    model.configure(
-        optimizer=optimizer, 
-        loss=torch.nn.CrossEntropyLoss(), 
-        metrics={"accuracy" : torchmetrics.accuracy()}
-    )
+    bert_model = AutoModel.from_pretrained('distilbert-base-uncased').to(device)
 
-    train_image_features, _, train_labels = load_features("train")
-    val_image_features, _, val_labels = load_features("val")
+    # Load features
+    train_image_features, train_questions, train_labels = load_features("train")
+    val_image_features, val_questions, val_labels = load_features("val")
 
-    full_questions = ql.load_binary_q("train")  # Replace with your question data loading
-    questions = [full_question[1][0] for full_question in full_questions]  # Extract the question text
-    output_file = f"features/train/text_embeddings.npz"
-    train_text_features = process_text_embeddings(questions, output_file)
+    # Tokenize text questions
+    train_text_inputs = tokenizer(list(train_questions), padding=True, truncation=True, return_tensors="pt").to(device)
+    val_text_inputs = tokenizer(list(val_questions), padding=True, truncation=True, return_tensors="pt").to(device)
 
-    # Repeat for validation set
-    full_questions_val = ql.load_binary_q("val")
-    questions_val = [full_question[1][0] for full_question in full_questions_val]  # Extract the question text
-    output_file_val = f"features/val/text_embeddings.npz"
-    val_text_features = process_text_embeddings(questions_val, output_file_val)
-    # Build the classifier
+    # Create datasets and dataloaders
+    train_dataset = FeatureDataset(train_image_features, train_text_inputs, train_labels)
+    val_dataset = FeatureDataset(val_image_features, val_text_inputs, val_labels)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
+
+    # Model setup
     image_dim = train_image_features.shape[1]
-    text_dim = train_text_features.shape[1]
-    classifier = build_classifier(image_dim,text_dim)
+    text_dim = bert_model.config.hidden_size
+    classifier = Classifier(image_dim, text_dim).to(device)
 
-    # Compile the model
-    classifier.compile(
-        optimizer="adam",
-        loss="binary_crossentropy",
-        metrics=["accuracy"]
-    )\
-    
+    # Separate optimizers with different learning rates
+    classifier_optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
+    bert_optimizer = optim.Adam(bert_model.parameters(), lr=5e-5)
 
+    criterion = nn.BCELoss()
 
+    # Training loop
+    num_epochs = 5
+    for epoch in range(num_epochs):
+        classifier.train()
+        bert_model.train()
+        total_loss = 0
+        total_accuracy = 0  # Variable to accumulate accuracy
 
-    # Model summary
-    classifier.summary()
+        for image_features, input_ids, attention_mask, labels in tqdm(train_loader):
+            image_features, input_ids, attention_mask, labels = image_features.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
 
-    # Train the classifier
-    history = classifier.fit(
-        [train_image_features, train_text_features],  # Input: image and text features
-        train_labels,  # Labels
-        validation_data=([val_image_features, val_text_features], val_labels),
-        batch_size=64,
-        epochs=100
-    )
+            # Forward pass through BERT
+            text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+            text_features = text_outputs[:, 0, :]  # Use [CLS] token representation
+
+            # Forward pass through classifier
+            classifier_optimizer.zero_grad()
+            bert_optimizer.zero_grad()
+            outputs = classifier(image_features, text_features)
+            loss = criterion(outputs.squeeze(), labels)
+            loss.backward()
+            classifier_optimizer.step()
+            bert_optimizer.step()
+
+            total_loss += loss.item()
+
+            # Calculate accuracy
+            accuracy = compute_accuracy(outputs.squeeze(), labels)
+            total_accuracy += accuracy.item()
+
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss:.4f}, Accuracy: {total_accuracy/len(train_loader):.4f}")
+
+        # Validation loop
+        classifier.eval()
+        bert_model.eval()
+        val_loss = 0
+        val_accuracy = 0
+        with torch.no_grad():
+            for image_features, input_ids, attention_mask, labels in val_loader:
+                image_features, input_ids, attention_mask, labels = image_features.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
+                text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+                text_features = text_outputs[:, 0, :]
+                outputs = classifier(image_features, text_features)
+                loss = criterion(outputs.squeeze(), labels)
+                val_loss += loss.item()
+
+                # Calculate accuracy
+                accuracy = compute_accuracy(outputs.squeeze(), labels)
+                val_accuracy += accuracy.item()
+
+        print(f"Validation Loss: {val_loss:.4f}, Accuracy: {val_accuracy/len(val_loader):.4f}")
 
     # Save the trained model
-    classifier.save("clip_classifier_model.keras")
+    torch.save(classifier.state_dict(), "clip_classifier_model.pth")
+    print("Model saved!")
 
-
-
-
-    def calculate_total_size(location):
-        feature_dir = f"features/{location}"
-        total_size = 0
-        for dirpath, _, filenames in os.walk(feature_dir):
-            for file in filenames:
-                if file.endswith('.npy'):
-                    total_size += os.path.getsize(os.path.join(dirpath, file))
-        return total_size / (1024 ** 3)  # Convert bytes to GB
-
-    # print("Train size:", calculate_total_size("train"))
-    # print("Val size:", calculate_total_size("val"))
+if __name__ == "__main__":
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    main()
