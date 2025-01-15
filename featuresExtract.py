@@ -8,6 +8,8 @@ from questionLoading import BinaryQuestionHandler as ql
 import matplotlib.pyplot as plt
 
 def load_binary_q(location):
+    if not os.path.exists(f'binary_questions_{location}'):
+        ql.save_binary_q(location)
     with open(f'binary_questions_{location}', 'rb') as f:
         binary_questions = pickle.load(f)
     return binary_questions
@@ -44,7 +46,6 @@ def show_images_and_questions(location="train"):
 def extract_features(location,batch_size=500):
     save_dir = f"features/{location}"
     if (os.path.isdir(save_dir) and len(os.listdir(save_dir)) > 0):
-        ql.load_binary_q(location)
         print("ending")
         return
     full_questions = load_binary_q(location)
