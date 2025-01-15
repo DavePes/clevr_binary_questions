@@ -44,6 +44,7 @@ def show_images_and_questions(location="train"):
 def extract_features(location,batch_size=500):
     save_dir = f"features/{location}"
     if (os.path.isdir(save_dir) and len(os.listdir(save_dir)) > 0):
+        ql.load_binary_q(location)
         print("ending")
         return
     full_questions = load_binary_q(location)
