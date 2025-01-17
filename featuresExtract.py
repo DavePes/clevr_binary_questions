@@ -6,6 +6,7 @@ import numpy as np
 import pickle
 from questionLoading import BinaryQuestionHandler as ql
 import matplotlib.pyplot as plt
+import argparse
 
 def load_binary_q(location):
     if not os.path.exists(f'binary_questions_{location}'):
@@ -48,10 +49,6 @@ def extract_features(location, batch_size=500):
     print(f"Using device: {device}")
 
     save_dir = f"features/{location}"
-    if os.path.isdir(save_dir) and len(os.listdir(save_dir)) > 0:
-        print("Ending - features already exist.")
-        return
-
     full_questions = load_binary_q(location)
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -164,17 +161,35 @@ def features_without_change(location, batch_size=500):
     print(f"Images saved in {save_path}")
 
 
-
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Run feature extraction and related tasks.")
+    parser.add_argument("--function", type=str, required=True, choices=[
+        "extr", "cons", "no_change", "show"],
+        help="The function to execute.")
+    parser.add_argument("--location", type=str, required=True, help="Dataset location (e.g., 'train' or 'val').")
+    parser.add_argument("--batch_size", type=int, default=500, help="Batch size for processing.")
 
-    # # Run feature extraction for the validation set in batches of 200
+    args = parser.parse_args()
 
-    extract_features("train", batch_size=500)
-    extract_features('val', batch_size=500)
-    # #Call this once to consolidate features
-    consolidate_features("train")
-    consolidate_features("val")
-    # Example call to the function
-    features_without_change("train", batch_size=2000)
-    #show_images_and_questions("train")
-    features_without_change("val", batch_size=500)
+    if args.function == "extr":
+        extract_features(args.location, args.batch_size)
+    elif args.function == "cons":
+        consolidate_features(args.location)
+    elif args.function == "no_change":
+        features_without_change(args.location, args.batch_size)
+    elif args.function == "show":
+        show_images_and_questions(args.location)
+        
+# if __name__ == '__main__':
+
+#     # # Run feature extraction for the validation set in batches of 200
+
+#     extract_features("train", batch_size=500)
+#     extract_features('val', batch_size=500)
+#     # #Call this once to consolidate features
+#     consolidate_features("train")
+#     consolidate_features("val")
+#     # Example call to the function
+#     features_without_change("train", batch_size=2000)
+#     #show_images_and_questions("train")
+#     features_without_change("val", batch_size=500)
