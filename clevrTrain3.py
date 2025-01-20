@@ -95,7 +95,7 @@ def main():
     bert_optimizer = optim.Adam(bert_model.parameters(), lr=5e-5)
 
     criterion = nn.BCELoss()
-    scaler = torch.cuda.amp.GradScaler()
+    #scaler = torch.cuda.amp.GradScaler()
     # Training loop
     num_epochs = 5
     for epoch in range(num_epochs):
@@ -116,13 +116,13 @@ def main():
             bert_optimizer.zero_grad()
             outputs = classifier(image_features, text_features)
             loss = criterion(outputs.squeeze(), labels)
-            # loss.backward()
-            # classifier_optimizer.step()
-            # bert_optimizer.step()
-            scaler.scale(loss).backward()
-            scaler.step(classifier_optimizer)
-            scaler.step(bert_optimizer)
-            scaler.update()
+            loss.backward()
+            classifier_optimizer.step()
+            bert_optimizer.step()
+            # scaler.scale(loss).backward()
+            # scaler.step(classifier_optimizer)
+            # scaler.step(bert_optimizer)
+            # scaler.update()
             total_loss += loss.item()
 
             # Calculate accuracy
