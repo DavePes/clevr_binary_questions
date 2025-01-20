@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, AutoModel
-
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # Custom Dataset for PyTorch
 class FeatureDataset(Dataset):
     def __init__(self, image_features, text_inputs, labels):
@@ -95,7 +95,7 @@ def main():
     bert_optimizer = optim.Adam(bert_model.parameters(), lr=5e-5)
 
     criterion = nn.BCELoss()
-
+    scaler = torch.cuda.amp.GradScaler()
     # Training loop
     num_epochs = 5
     for epoch in range(num_epochs):
@@ -116,10 +116,13 @@ def main():
             bert_optimizer.zero_grad()
             outputs = classifier(image_features, text_features)
             loss = criterion(outputs.squeeze(), labels)
-            loss.backward()
-            classifier_optimizer.step()
-            bert_optimizer.step()
-
+            # loss.backward()
+            # classifier_optimizer.step()
+            # bert_optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(classifier_optimizer)
+            scaler.step(bert_optimizer)
+            scaler.update()
             total_loss += loss.item()
 
             # Calculate accuracy
@@ -146,8 +149,8 @@ def main():
                 accuracy = compute_accuracy(outputs.squeeze(), labels)
                 val_accuracy += accuracy.item()
 
-        print(f"Validation Loss: {val_loss:.4f}, Accuracy: {val_accuracy/len(val_loader):.4f}")
-
+            print(f"Validation Loss: {val_loss:.4f}, Accuracy: {val_accuracy/len(val_loader):.4f}")
+        torch.cuda.empty_cache()
     # Save the trained model
     torch.save(classifier.state_dict(), "clip_classifier_model.pth")
     print("Model saved!")
