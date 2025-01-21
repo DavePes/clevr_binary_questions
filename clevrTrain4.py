@@ -28,7 +28,7 @@ class FeatureDataset(Dataset):
 # Function to load features
 def load_features(location):
     labels = np.load(f"features/{location}/consolidated_features.npz")["labels"]
-    data = np.load(f"raw/{location}/data.npz", allow_pickle=True)
+    data = np.load(f"raw/{location}/data.npz", allow_pickle=True,mmap_mode='r')
     questions = data['questions'][:, 0]
     images = data['images']
     return images, questions, labels
