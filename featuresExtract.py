@@ -7,6 +7,8 @@ import pickle
 from questionLoading import BinaryQuestionHandler as ql
 import matplotlib.pyplot as plt
 import argparse
+import random
+import torchvision.transforms as T
 
 def load_binary_q(location):
     if not os.path.exists(f'binary_questions_{location}'):
@@ -140,16 +142,20 @@ def features_without_change(location, batch_size=500):
     
     # Step 2: Preallocate Image Array
     # Assuming images are of fixed size (320, 480, 3)
-    image_shape = (320, 480, 3)  # Update if images have a different fixed size
-    accumulated_images = np.empty((total_images, *image_shape), dtype=np.uint8)
-    
+    #WE reduce the size of the image to 80% of width and height
+    # 320*08 384*08 = 256 384
+    # Resize to 80% of original size (256 x 384)
+    new_size = (384,256)  # Note: Pillow expects (width, height)
+    accumulated_images = np.empty((total_images, *new_size[::-1], 3), dtype=np.uint8)
+    # bicubic interpolation
     # Step 3: Fill Preallocated Array
     for start_idx in range(0, total_images, batch_size):
         end_idx = min(start_idx + batch_size, total_images)
         for i, idx in enumerate(range(start_idx, end_idx)):
             image_path = valid_image_paths[idx]
             img = Image.open(image_path).convert("RGB")
-            accumulated_images[start_idx + i] = np.array(img, dtype=np.uint8)  # Fill the preallocated array
+            resized_img = img.resize(new_size, Image.BICUBIC)
+            accumulated_images[start_idx + i] = np.array(resized_img, dtype=np.uint8)  # Fill the preallocated array
         
         print(f"Processed batch {start_idx}-{end_idx - 1}")
     
@@ -160,7 +166,48 @@ def features_without_change(location, batch_size=500):
     np.savez_compressed(save_path, questions=questions, images=accumulated_images)
     print(f"Images saved in {save_path}")
 
+# 480*0.8 320*0.8 = 384 256
+def display_random_resized_images(location="train", num_images=100, size=(384,256)):
+    """
+    Selects 100 random images from the train directory, resizes them using
+    1) PyTorch bicubic interpolation and
+    2) PyTorch lanczos interpolation,
+    then displays the original image and resized versions.
+    """
+    # Define the image directory
+    image_dir = f"CLEVR_v1.0/images/{location}"
+    image_files = [f for f in os.listdir(image_dir) if f.endswith(".png")]
 
+    # Randomly select 100 images
+    random_images = random.sample(image_files, num_images)
+
+    # Define PyTorch transformations
+
+    for img_file in random_images:
+        img_path = os.path.join(image_dir, img_file)
+
+        # Load the original image
+        original_img = Image.open(img_path).convert("RGB")
+        print(original_img.size)
+        # Apply transformations
+        resized_bicubic = original_img.resize(size, Image.BICUBIC)
+
+        # Display the original and resized images
+        plt.figure(figsize=(12, 4))
+
+        plt.subplot(1, 3, 1)
+        plt.imshow(original_img)
+        plt.title("Original Image")
+        plt.axis("off")
+
+        plt.subplot(1, 3, 2)
+        plt.imshow(resized_bicubic)
+        plt.title("Resized (Bicubic)")
+        plt.axis("off")
+
+        plt.tight_layout()
+        plt.show()
+#display_random_resized_images()
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run feature extraction and related tasks.")
     parser.add_argument("--function", type=str, required=True, choices=[
