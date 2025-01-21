@@ -145,7 +145,10 @@ def main():
     )
 
     # 6) Prepare classifier
-    image_dim = mobilevit_model.embed_dim  # From timm's mobilevit_s
+    dummy_input = torch.randn(1, 3, 224, 224).to(device)  # Default input size for MobileViT
+    dummy_output = mobilevit_model(dummy_input)
+    image_dim = dummy_output.shape[1]
+    print(f"Determined image_dim: {image_dim}")
     text_dim = bert_model.config.hidden_size
     classifier = Classifier(image_dim, text_dim).to(device)
 
