@@ -31,7 +31,7 @@ def load_features(location):
     data = np.load(f"raw/{location}/data.npz", allow_pickle=True)
     questions = data['questions'][:, 0]
     images = data['images']
-    return images, questions, data["labels"]
+    return images, questions, labels
 
 # Define the classifier model
 class Classifier(nn.Module):
@@ -77,7 +77,7 @@ def main():
 
 
     # Load MobileViT-Small pretrained model
-    mobilevit_model = create_model('mobilevit_small', pretrained=True)
+    mobilevit_model = create_model('mobilevit_s', pretrained=True)
     mobilevit_model.classifier = nn.Identity()  # Remove the classification head to get feature embeddings
     mobilevit_model = mobilevit_model.to(device)
     
