@@ -10,35 +10,59 @@ from timm import create_model
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# Custom Dataset for PyTorch
 class FeatureDataset(Dataset):
-    def __init__(self, images, text_inputs, labels):
-        print("Initializing Dataset...")
-        self.images = torch.tensor(images, dtype=torch.float32)
-        self.text_inputs = text_inputs  # Expecting a dictionary with 'input_ids' and 'attention_mask'
-        self.labels = torch.tensor(labels, dtype=torch.float32)
-        print("Dataset initialized.")
+    def __init__(self, data_path, labels, tokenizer):
+        """
+        data_path: Path to the .npz file containing 'images' and 'questions'.
+        labels: NumPy array of labels (float 0/1 or similar).
+        tokenizer: A tokenizer from Transformers (e.g., AutoTokenizer).
+        """
+        # Memory-map the NPZ so we don't load everything at once
+        self.data = np.load(data_path, mmap_mode='r')
+        
+        # These are still NumPy arrays, but memory-mapped
+        self.images = self.data['images']            # shape: (N, H, W, C), dtype=uint8
+        self.questions = self.data['questions'][:, 0]  # shape: (N,), e.g. each entry is a string or object
+        self.labels = labels                          # shape: (N,), separate np array
+        self.tokenizer = tokenizer
+        
+        # Store the length
+        self.length = len(self.labels)
 
     def __len__(self):
-        return len(self.labels)
+        return self.length
 
     def __getitem__(self, idx):
-        return (self.images[idx].permute(2, 0, 1),  # Convert (H, W, C) -> (C, H, W)
-                self.text_inputs['input_ids'][idx], 
-                self.text_inputs['attention_mask'][idx], 
-                self.labels[idx])
-
-# Function to load features
-def load_features(location):
-    print(f"Loading features from {location}...")
-    labels = np.load(f"features/{location}/consolidated_features.npz")["labels"]
-    print("Loaded labels.")
-    data = np.load(f"raw/{location}/data.npz", allow_pickle=True, mmap_mode='r')
-    print("Loaded raw data.")
-    questions = data['questions'][:, 0]
-    images = data['images']
-    print("Features loaded.")
-    return images, questions, labels
+        # 1) Load image from disk (uint8)
+        image_uint8 = self.images[idx]  # shape (H, W, C)
+        
+        # 2) Convert to float32 and normalize
+        image_tensor = torch.tensor(image_uint8, dtype=torch.float32).permute(2, 0, 1) / 255.0
+        # image_tensor shape: (C, H, W)
+        
+        # 3) Retrieve question as string
+        #question_str = str(self.questions[idx])
+        question_str = self.questions[idx]
+        # 4) Tokenize question
+        #    Return_tensors='pt' -> shape: (1, seq_len)
+        encoded = self.tokenizer(
+            question_str,
+            #padding="max_length",
+            padding=True,
+            truncation=True,
+            #max_length=32,        # or whatever
+            return_tensors="pt"
+        )
+        
+        # Squeeze out the batch dimension (1)
+        input_ids = encoded["input_ids"].squeeze(0)
+        attention_mask = encoded["attention_mask"].squeeze(0)
+        
+        # 5) Convert label to float tensor
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        
+        return image_tensor, input_ids, attention_mask, label
+  
 
 # Define the classifier model
 class Classifier(nn.Module):
@@ -79,46 +103,61 @@ def compute_accuracy(predictions, labels):
     return accuracy
 
 def main():
-    print("Loading DistilBERT tokenizer and model...")
-    tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
-    bert_model = AutoModel.from_pretrained('distilbert-base-uncased').to(device)
-    print("DistilBERT loaded.")
+    # 1) Load the tokenizer (e.g., DistilBERT)
+    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
-    print("Loading MobileViT-Small model...")
+    # 2) Load models
+    bert_model = AutoModel.from_pretrained('distilbert-base-uncased').to(device)
     mobilevit_model = create_model('mobilevit_s', pretrained=True)
     mobilevit_model.classifier = nn.Identity()
     mobilevit_model = mobilevit_model.to(device)
-    print("MobileViT-Small loaded.")
+  
+    # 3) Load labels
+    labels_train = np.load("features/train/consolidated_features.npz")["labels"]
+    labels_val = np.load("features/val/consolidated_features.npz")["labels"]
 
-    print("Loading training data...")
-    train_images, train_questions, train_labels = load_features("train")
-    print("Loading validation data...")
-    val_images, val_questions, val_labels = load_features("val")
+    # 4) Create the Dataset
+    train_dataset = FeatureDataset(
+        data_path="raw/train/data.npz",
+        labels=labels_train,
+        tokenizer=tokenizer
+    )
+    val_dataset = FeatureDataset(
+        data_path="raw/val/data.npz",
+        labels=labels_val,          # <-- Use validation labels here
+        tokenizer=tokenizer
+    )
 
-    print("Tokenizing questions...")
-    train_text_inputs = tokenizer(list(train_questions), padding=True, truncation=True, return_tensors="pt").to(device)
-    val_text_inputs = tokenizer(list(val_questions), padding=True, truncation=True, return_tensors="pt").to(device)
-    print("Questions tokenized.")
+    # 5) Create the DataLoaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=128,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=128,
+        shuffle=False,        # Usually no need to shuffle in validation
+        num_workers=4,
+        pin_memory=True
+    )
 
-    print("Creating datasets and dataloaders...")
-    train_dataset = FeatureDataset(train_images, train_text_inputs, train_labels)
-    val_dataset = FeatureDataset(val_images, val_text_inputs, val_labels)
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
-    print("Datasets and dataloaders created.")
-
-    print("Setting up models and optimizers...")
-    image_dim = mobilevit_model.embed_dim
+    # 6) Prepare classifier
+    image_dim = mobilevit_model.embed_dim  # From timm's mobilevit_s
     text_dim = bert_model.config.hidden_size
     classifier = Classifier(image_dim, text_dim).to(device)
 
+    # 7) Define optimizers & loss
     classifier_optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
     bert_optimizer = optim.Adam(bert_model.parameters(), lr=2e-5)
     mobilevit_optimizer = optim.Adam(mobilevit_model.parameters(), lr=1e-5)
-
     criterion = nn.BCELoss()
+
     print("Setup complete.")
 
+    # 8) Training loop
     num_epochs = 5
     for epoch in range(num_epochs):
         print(f"Starting epoch {epoch + 1}/{num_epochs}...")
@@ -126,47 +165,53 @@ def main():
         bert_model.train()
         mobilevit_model.train()
 
-        total_loss = 0
-        total_accuracy = 0
+        total_loss = 0.0
+        total_accuracy = 0.0
 
         for batch_idx, (images, input_ids, attention_mask, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
-            print(f"Processing batch {batch_idx + 1}...")
+            # Move inputs to device
             images, input_ids, attention_mask, labels = (
                 images.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
             )
 
-            image_features = mobilevit_model(images)
-            text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-            text_features = text_outputs[:, 0, :]
-
+            # Zero out gradients
             classifier_optimizer.zero_grad()
             bert_optimizer.zero_grad()
             mobilevit_optimizer.zero_grad()
 
-            outputs = classifier(image_features, text_features)
-            loss = criterion(outputs.squeeze(), labels)
+            # Forward pass
+            image_features = mobilevit_model(images)  # shape: [batch_size, image_dim]
+            text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+            text_features = text_outputs[:, 0, :]     # [CLS] token
 
+            outputs = classifier(image_features, text_features).squeeze()
+            loss = criterion(outputs, labels)
+
+            # Backprop
             loss.backward()
             classifier_optimizer.step()
             bert_optimizer.step()
             mobilevit_optimizer.step()
 
+            # Accumulate stats
             total_loss += loss.item()
-            accuracy = compute_accuracy(outputs.squeeze(), labels)
+            accuracy = compute_accuracy(outputs, labels)
             total_accuracy += accuracy.item()
 
-        print(f"Epoch {epoch + 1}/{num_epochs} completed. Loss: {total_loss:.4f}, Accuracy: {total_accuracy / len(train_loader):.4f}")
+        avg_loss = total_loss / len(train_loader)
+        avg_acc = total_accuracy / len(train_loader)
+        print(f"Epoch {epoch + 1} completed. Loss: {avg_loss:.4f}, Accuracy: {avg_acc:.4f}")
 
+        # Validation
         print("Validating...")
         classifier.eval()
         bert_model.eval()
         mobilevit_model.eval()
-        val_loss = 0
-        val_accuracy = 0
+        val_loss = 0.0
+        val_accuracy = 0.0
 
         with torch.no_grad():
             for batch_idx, (images, input_ids, attention_mask, labels) in enumerate(val_loader):
-                print(f"Validating batch {batch_idx + 1}...")
                 images, input_ids, attention_mask, labels = (
                     images.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
                 )
@@ -175,13 +220,17 @@ def main():
                 text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
                 text_features = text_outputs[:, 0, :]
 
-                outputs = classifier(image_features, text_features)
-                loss = criterion(outputs.squeeze(), labels)
+                outputs = classifier(image_features, text_features).squeeze()
+                loss = criterion(outputs, labels)
 
                 val_loss += loss.item()
-                val_accuracy += compute_accuracy(outputs.squeeze(), labels).item()
+                val_accuracy += compute_accuracy(outputs, labels).item()
 
-        print(f"Validation completed. Loss: {val_loss:.4f}, Accuracy: {val_accuracy / len(val_loader):.4f}")
+        avg_val_loss = val_loss / len(val_loader)
+        avg_val_accuracy = val_accuracy / len(val_loader)
+        print(f"Validation completed. Loss: {avg_val_loss:.4f}, Accuracy: {avg_val_accuracy:.4f}")
+
+        # Optionally clear GPU cache
         torch.cuda.empty_cache()
 
     print("Saving model...")
