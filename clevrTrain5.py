@@ -18,7 +18,7 @@ class FeatureDataset(Dataset):
         tokenizer: A tokenizer from Transformers (e.g., AutoTokenizer).
         """
         # Memory-map the NPZ so we don't load everything at once
-        self.data = np.load(data_path, mmap_mode='r')
+        self.data = np.load(data_path, mmap_mode='r',allow_pickle=True)
         
         # These are still NumPy arrays, but memory-mapped
         self.images = self.data['images']            # shape: (N, H, W, C), dtype=uint8
@@ -139,7 +139,7 @@ def main():
     val_loader = DataLoader(
         val_dataset,
         batch_size=128,
-        shuffle=False,        # Usually no need to shuffle in validation
+        shuffle=False,        #no need to shuffle
         num_workers=4,
         pin_memory=True
     )
