@@ -11,22 +11,21 @@ from timm import create_model
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 class FeatureDataset(Dataset):
-    def __init__(self, data_path, labels, tokenizer):
+    def __init__(self, data_path, labels):
         """
         data_path: Path to the .npz file containing 'images' and 'questions'.
-        labels: NumPy array of labels (float 0/1 or similar).
-        tokenizer: A tokenizer from Transformers (e.g., AutoTokenizer).
+        labels: NumPy array of labels (float 0/1).
         """
         # Memory-map the NPZ so we don't load everything at once
-        self.data = np.load(data_path, mmap_mode='r',allow_pickle=True)
+        # Use allow_pickle=True if 'questions' is an object array
+        self.data = np.load(data_path, mmap_mode='r', allow_pickle=True)
         
         # These are still NumPy arrays, but memory-mapped
         self.images = self.data['images']            # shape: (N, H, W, C), dtype=uint8
-        self.questions = self.data['questions'][:, 0]  # shape: (N,), e.g. each entry is a string or object
-        self.labels = labels                          # shape: (N,), separate np array
-        self.tokenizer = tokenizer
+        self.questions = self.data['questions'][:, 0]  # shape: (N,)
+        self.labels = labels                          # shape: (N,)
         
-        # Store the length
+        # Store length
         self.length = len(self.labels)
 
     def __len__(self):
@@ -34,35 +33,49 @@ class FeatureDataset(Dataset):
 
     def __getitem__(self, idx):
         # 1) Load image from disk (uint8)
-        image_uint8 = self.images[idx]  # shape (H, W, C)
+        image_uint8 = self.images[idx]  # shape: (H, W, C)
         
         # 2) Convert to float32 and normalize
         image_tensor = torch.tensor(image_uint8, dtype=torch.float32).permute(2, 0, 1) / 255.0
         # image_tensor shape: (C, H, W)
         
-        # 3) Retrieve question as string
-        #question_str = str(self.questions[idx])
+        # 3) Retrieve question string
         question_str = self.questions[idx]
-        # 4) Tokenize question
-        #    Return_tensors='pt' -> shape: (1, seq_len)
-        encoded = self.tokenizer(
-            question_str,
-            #padding="max_length",
-            padding=True,
-            truncation=True,
-            #max_length=32,        # or whatever
-            return_tensors="pt"
-        )
-        
-        # Squeeze out the batch dimension (1)
-        input_ids = encoded["input_ids"].squeeze(0)
-        attention_mask = encoded["attention_mask"].squeeze(0)
-        
-        # 5) Convert label to float tensor
+
+        # 4) Convert label to float tensor
         label = torch.tensor(self.labels[idx], dtype=torch.float32)
         
-        return image_tensor, input_ids, attention_mask, label
-  
+        # Return the raw question_str so we can tokenize in collate_fn
+        return (image_tensor, question_str, label)
+
+def collate_fn(batch, tokenizer=None):
+    """
+    Custom collate function for batch-level tokenization.
+    
+    batch: list of (image_tensor, question_str, label) from Dataset.__getitem__
+    tokenizer: A tokenizer (e.g., DistilBERT) for text
+    
+    Returns a tuple: (images, input_ids, attention_mask, labels)
+    """
+    # Unpack the batch
+    images, question_strs, labels = zip(*batch)  # Each is now a tuple of length "batch_size"
+    
+    # Stack image tensors
+    images = torch.stack(images)        # shape: [batch_size, C, H, W]
+    labels = torch.stack(labels)        # shape: [batch_size]
+    
+    # Tokenize all question strings at once
+    encoded = tokenizer(
+        list(question_strs),
+        padding=True,           # pad to the max sequence length within the batch
+        truncation=True,
+        return_tensors="pt"
+    )
+    
+    input_ids = encoded["input_ids"]           # shape: [batch_size, seq_len]
+    attention_mask = encoded["attention_mask"] # shape: [batch_size, seq_len]
+    
+    return images, input_ids, attention_mask, labels
 
 # Define the classifier model
 class Classifier(nn.Module):
@@ -103,6 +116,9 @@ def compute_accuracy(predictions, labels):
     return accuracy
 
 def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
     # 1) Load the tokenizer (e.g., DistilBERT)
     tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
@@ -119,40 +135,45 @@ def main():
     # 4) Create the Dataset
     train_dataset = FeatureDataset(
         data_path="raw/train/data.npz",
-        labels=labels_train,
-        tokenizer=tokenizer
+        labels=labels_train
     )
     val_dataset = FeatureDataset(
         data_path="raw/val/data.npz",
-        labels=labels_val,          # <-- Use validation labels here
-        tokenizer=tokenizer
+        labels=labels_val
     )
 
-    # 5) Create the DataLoaders
+    # 5) Create the DataLoaders with a custom collate_fn
+    #    We pass the tokenizer to collate_fn using a lambda or partial
     train_loader = DataLoader(
         train_dataset,
         batch_size=128,
         shuffle=True,
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=lambda batch: collate_fn(batch, tokenizer=tokenizer)
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=128,
-        shuffle=False,        #no need to shuffle
+        shuffle=False,
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=lambda batch: collate_fn(batch, tokenizer=tokenizer)
     )
 
-    # 6) Prepare classifier
-    dummy_input = torch.randn(1, 3, 224, 224).to(device)  # Default input size for MobileViT
+    # 6) Determine the image feature dimension dynamically
+    dummy_input = torch.randn(1, 3, 224, 224).to(device)
     dummy_output = mobilevit_model(dummy_input)
-    image_dim = dummy_output.shape[1]
+    image_dim = dummy_output.shape[1]  # e.g., 1000 for some MobileViT variants
     print(f"Determined image_dim: {image_dim}")
-    text_dim = bert_model.config.hidden_size
+
+    # 7) Determine BERT's hidden dimension
+    text_dim = bert_model.config.hidden_size  # e.g., 768 for distilbert-base-uncased
+
+    # 8) Initialize the classifier
     classifier = Classifier(image_dim, text_dim).to(device)
 
-    # 7) Define optimizers & loss
+    # Define optimizers & loss
     classifier_optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
     bert_optimizer = optim.Adam(bert_model.parameters(), lr=2e-5)
     mobilevit_optimizer = optim.Adam(mobilevit_model.parameters(), lr=1e-5)
@@ -160,7 +181,7 @@ def main():
 
     print("Setup complete.")
 
-    # 8) Training loop
+    # 9) Training loop
     num_epochs = 5
     for epoch in range(num_epochs):
         print(f"Starting epoch {epoch + 1}/{num_epochs}...")
@@ -173,9 +194,10 @@ def main():
 
         for batch_idx, (images, input_ids, attention_mask, labels) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
             # Move inputs to device
-            images, input_ids, attention_mask, labels = (
-                images.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
-            )
+            images = images.to(device)
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+            labels = labels.to(device)
 
             # Zero out gradients
             classifier_optimizer.zero_grad()
@@ -185,7 +207,7 @@ def main():
             # Forward pass
             image_features = mobilevit_model(images)  # shape: [batch_size, image_dim]
             text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-            text_features = text_outputs[:, 0, :]     # [CLS] token
+            text_features = text_outputs[:, 0, :]     # [CLS] token from DistilBERT
 
             outputs = classifier(image_features, text_features).squeeze()
             loss = criterion(outputs, labels)
@@ -215,9 +237,10 @@ def main():
 
         with torch.no_grad():
             for batch_idx, (images, input_ids, attention_mask, labels) in enumerate(val_loader):
-                images, input_ids, attention_mask, labels = (
-                    images.to(device), input_ids.to(device), attention_mask.to(device), labels.to(device)
-                )
+                images = images.to(device)
+                input_ids = input_ids.to(device)
+                attention_mask = attention_mask.to(device)
+                labels = labels.to(device)
 
                 image_features = mobilevit_model(images)
                 text_outputs = bert_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
@@ -242,5 +265,4 @@ def main():
 
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
     main()
