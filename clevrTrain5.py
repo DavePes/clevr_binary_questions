@@ -28,7 +28,7 @@ class RandomQADataset(Dataset):
         qa_data = np.load(qa_path, mmap_mode='r', allow_pickle=True)
         self.qa_list = qa_data['arr_0']  # shape: [N], each item = np.array([...], dtype=object)
 
-        # Make sure we have the same number of images and Q&A entries
+        # Just to make sure we have the same number of images and Q&A entries
         assert len(self.images) == len(self.qa_list), \
             f"Mismatch: images={len(self.images)}, qa={len(self.qa_list)}"
 
@@ -51,7 +51,12 @@ class RandomQADataset(Dataset):
         # pick one random row
         row_idx = random.randint(0, len(qa_array) - 1)
         question_str, answer_bool = qa_array[row_idx]
-        label_value = 1.0 if answer_bool else 0.0
+        if answer_bool == "True":
+            label_value = 1.0
+        elif answer_bool == "False":
+            label_value = 0.0
+        else:
+            raise Exception("unknown type of label")
 
         label = torch.tensor(label_value, dtype=torch.float32)
 
@@ -264,7 +269,7 @@ def main():
         torch.cuda.empty_cache()
 
     print("Saving model...")
-    torch.save(classifier.state_dict(), "clip_classifier_model.pth")
+    torch.save(classifier.state_dict(), "clevr_classifier_model.pth")
     print("Model saved.")
 
 if __name__ == "__main__":
