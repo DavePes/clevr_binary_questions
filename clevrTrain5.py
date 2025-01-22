@@ -131,9 +131,9 @@ def main():
     ### Hyperparameters ###
     batch_size = 64
     num_workers = 4
-    num_epochs = 5
+    num_epochs = 20
     lr_classifier = 1e-4
-    lr_bert = 2e-5
+    lr_bert = 1.5e-5
     lr_mobilevit = 1e-5
     #######################
 
