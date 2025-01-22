@@ -116,17 +116,25 @@ def consolidate_features(location):
         text_features=text_features,
         labels=labels
     )
+def question_label_save(full_questions,save_path):
+    label_questions = []
+    for one_image_questions in full_questions:
+        one_image_questions_array = np.array(one_image_questions[1:])
+        one_image_questions_array[:,1] = one_image_questions_array[:,1] == 'yes'
+        label_questions.append(one_image_questions_array)
+    np.savez_compressed(save_path,ql=label_questions)
 
 def features_without_change(location, batch_size=500):
     save_dir = f"raw/{location}"
-    save_path = f"{save_dir}/data.npz"  # Path to save the combined .npz
+    save_path = f"{save_dir}"  # Path to save
     os.makedirs(save_dir, exist_ok=True)  # Ensure directory exists
-    
+
     full_questions = load_binary_q(location)  # Load questions
-    questions = [full_question[1] for full_question in full_questions]  # Extract all questions
     question_indices = [full_question[0] for full_question in full_questions]  # Extract image indices
+
+    question_label_save(full_questions,save_path+"/ql.npz")
+
     image_dir = f"CLEVR_v1.0/images/{location}"
-    
     # Get sorted list of image files
     image_files = sorted([f for f in os.listdir(image_dir) if f.endswith(".png")])
     image_paths = [os.path.join(image_dir, img) for img in image_files]
@@ -136,19 +144,15 @@ def features_without_change(location, batch_size=500):
     total_images = len(valid_image_paths)
     print(f"Total images: {total_images}, Processing in batches of {batch_size}")
     
-    # Step 1: Save Questions
-    np.savez_compressed(save_path, questions=np.array(questions, dtype=object))
-    print(f"Questions saved in {save_path}")
     
-    # Step 2: Preallocate Image Array
+    # Preallocate Image Array
     # Assuming images are of fixed size (320, 480, 3)
     #WE reduce the size of the image to 80% of width and height
-    # 320*08 384*08 = 256 384
-    # Resize to 80% of original size (256 x 384)
-    new_size = (384,256)  # Note: Pillow expects (width, height)
+    # 320*07 384*07 = (336,224)
+    new_size = (336,224)  # Note: Pillow expects (width, height)
     accumulated_images = np.empty((total_images, *new_size[::-1], 3), dtype=np.uint8)
     # bicubic interpolation
-    # Step 3: Fill Preallocated Array
+    # Fill Preallocated Array
     for start_idx in range(0, total_images, batch_size):
         end_idx = min(start_idx + batch_size, total_images)
         for i, idx in enumerate(range(start_idx, end_idx)):
@@ -158,56 +162,10 @@ def features_without_change(location, batch_size=500):
             accumulated_images[start_idx + i] = np.array(resized_img, dtype=np.uint8)  # Fill the preallocated array
         
         print(f"Processed batch {start_idx}-{end_idx - 1}")
-    
-    # Save Images
-    with np.load(save_path, allow_pickle=True) as data:
-        questions = data["questions"]
     print("compressed saving")
-    np.savez_compressed(save_path, questions=questions, images=accumulated_images)
+    np.savez_compressed(save_path + "/images.npz",images=accumulated_images)
     print(f"Images saved in {save_path}")
 
-# 480*0.8 320*0.8 = 384 256
-def display_random_resized_images(location="train", num_images=100, size=(384,256)):
-    """
-    Selects 100 random images from the train directory, resizes them using
-    1) PyTorch bicubic interpolation and
-    2) PyTorch lanczos interpolation,
-    then displays the original image and resized versions.
-    """
-    # Define the image directory
-    image_dir = f"CLEVR_v1.0/images/{location}"
-    image_files = [f for f in os.listdir(image_dir) if f.endswith(".png")]
-
-    # Randomly select 100 images
-    random_images = random.sample(image_files, num_images)
-
-    # Define PyTorch transformations
-
-    for img_file in random_images:
-        img_path = os.path.join(image_dir, img_file)
-
-        # Load the original image
-        original_img = Image.open(img_path).convert("RGB")
-        print(original_img.size)
-        # Apply transformations
-        resized_bicubic = original_img.resize(size, Image.BICUBIC)
-
-        # Display the original and resized images
-        plt.figure(figsize=(12, 4))
-
-        plt.subplot(1, 3, 1)
-        plt.imshow(original_img)
-        plt.title("Original Image")
-        plt.axis("off")
-
-        plt.subplot(1, 3, 2)
-        plt.imshow(resized_bicubic)
-        plt.title("Resized (Bicubic)")
-        plt.axis("off")
-
-        plt.tight_layout()
-        plt.show()
-#display_random_resized_images()
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run feature extraction and related tasks.")
     parser.add_argument("--function", type=str, required=True, choices=[
