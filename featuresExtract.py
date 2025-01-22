@@ -147,9 +147,10 @@ def features_without_change(location, batch_size=500):
     
     # Preallocate Image Array
     # Assuming images are of fixed size (320, 480, 3)
-    #WE reduce the size of the image to 80% of width and height
+    #WE reduce the size of the image to 70% of width and height
     # 320*07 384*07 = (336,224)
-    new_size = (336,224)  # Note: Pillow expects (width, height)
+    ## crop -> then resize to 0.65
+    new_size = (299, 195)
     accumulated_images = np.empty((total_images, *new_size[::-1], 3), dtype=np.uint8)
     # bicubic interpolation
     # Fill Preallocated Array
@@ -158,7 +159,13 @@ def features_without_change(location, batch_size=500):
         for i, idx in enumerate(range(start_idx, end_idx)):
             image_path = valid_image_paths[idx]
             img = Image.open(image_path).convert("RGB")
-            resized_img = img.resize(new_size, Image.BICUBIC)
+            width, height = img.size
+            cropped_img = img.crop((10, 10, width - 10, height - 10))  # (left, top, right, bottom)
+                
+            # Resize the cropped image using bicubic interpolation
+            width,height = cropped_img.size
+            resized_img = cropped_img.resize((299,195), Image.BICUBIC)   
+            #resized_img = img.resize(new_size, Image.BICUBIC)
             accumulated_images[start_idx + i] = np.array(resized_img, dtype=np.uint8)  # Fill the preallocated array
         
         print(f"Processed batch {start_idx}-{end_idx - 1}")
