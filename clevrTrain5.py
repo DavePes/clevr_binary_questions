@@ -51,8 +51,9 @@ class RandomQADataset(Dataset):
         # pick one random row
         row_idx = random.randint(0, len(qa_array) - 1)
         question_str, answer_bool = qa_array[row_idx]
+        label_value = 1.0 if answer_bool else 0.0
 
-        label = torch.tensor(answer_bool, dtype=torch.float32)
+        label = torch.tensor(label_value, dtype=torch.float32)
 
         # Return raw question_str for tokenization in collate_fn
         return (image_tensor, question_str, label)
