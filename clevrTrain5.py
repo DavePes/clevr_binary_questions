@@ -143,10 +143,10 @@ def main():
 
     # 3) Create Datasets (images + QA)
     #    Adjust file paths to your own structure
-    train_images_path = "raw/images_train.npz"
-    train_qa_path = "raw/ql_train.npz"
-    val_images_path = "raw/images_val.npz"
-    val_qa_path = "raw/ql_val.npz"
+    train_images_path = "raw/images/train.npz"
+    train_qa_path = "raw/ql/train.npz"
+    val_images_path = "raw/images/val.npz"
+    val_qa_path = "raw/ql/val.npz"
 
     train_dataset = RandomQADataset(train_images_path, train_qa_path)
     val_dataset = RandomQADataset(val_images_path, val_qa_path)
