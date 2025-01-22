@@ -165,7 +165,6 @@ def features_without_change(location, batch_size=500):
     print("compressed saving")
     np.savez_compressed(save_path + "/images.npz",images=accumulated_images)
     print(f"Images saved in {save_path}")
-features_without_change("train")
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run feature extraction and related tasks.")
     parser.add_argument("--function", type=str, required=True, choices=[
