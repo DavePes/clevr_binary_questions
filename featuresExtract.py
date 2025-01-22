@@ -162,7 +162,7 @@ def features_without_change(location, batch_size=500):
                 
             # Resize the cropped image using bicubic interpolation
             width,height = cropped_img.size
-            resized_img = cropped_img.resize((299,195), Image.BICUBIC)   
+            resized_img = cropped_img.resize(new_size, Image.BICUBIC)   
             #resized_img = img.resize(new_size, Image.BICUBIC)
             accumulated_images[start_idx + i] = np.array(resized_img, dtype=np.uint8)  # Fill the preallocated array
         
