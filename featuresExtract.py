@@ -122,7 +122,7 @@ def question_label_save(full_questions,save_path):
         one_image_questions_array = np.array(one_image_questions[1:])
         one_image_questions_array[:,1] = one_image_questions_array[:,1] == 'yes'
         label_questions.append(one_image_questions_array)
-    np.savez_compressed(save_path,ql=label_questions)
+    np.savez_compressed(save_path,np.array(label_questions, dtype=object),allow_pickle=True)
 
 def features_without_change(location, batch_size=500):
     save_dir = f"raw/{location}"
@@ -165,7 +165,7 @@ def features_without_change(location, batch_size=500):
     print("compressed saving")
     np.savez_compressed(save_path + "/images.npz",images=accumulated_images)
     print(f"Images saved in {save_path}")
-
+features_without_change("train")
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run feature extraction and related tasks.")
     parser.add_argument("--function", type=str, required=True, choices=[
