@@ -102,18 +102,20 @@ class SimpleCrossModalModel(nn.Module):
             nn.Linear(vision_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout_rate=0.3),
+            nn.Dropout(dropout_rate),
         )
         self.text_fc = nn.Sequential(
             nn.Linear(text_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
+            nn.Dropout(dropout_rate),
         )
         # Then maybe:
         self.classifier = nn.Sequential(
             nn.Linear(2*hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
+            nn.Dropout(dropout_rate),
             nn.Linear(2*hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
