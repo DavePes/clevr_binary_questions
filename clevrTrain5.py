@@ -71,7 +71,8 @@ def collate_fn(batch, tokenizer=None):
     images, question_strs, labels = zip(*batch)
 
     # Stack images => [batch_size, 3, H, W]
-    images = torch.stack(images)
+    images = torch.stack(images)  
+    images = images[:,[2,1,0],:,:] # MOBILE NET EXPECT BGR NOT RGB
     labels = torch.stack(labels)
 
     # Tokenize questions
