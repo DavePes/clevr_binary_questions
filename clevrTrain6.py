@@ -229,12 +229,12 @@ def main():
         hidden_dim=256,   # or 512, etc.
         nheads=4,
         num_layers=2,
-        dropout=0.1
+        dropout=0.2
     ).to(device)
 
     # 8) Define optimizers & loss
     #    We'll train: cross_modal_model, bert_model, and the MobileViT parameters
-    optimizer = optim.Adam([
+    optimizer = optim.AdamW([
         {'params': cross_modal_model.parameters(), 'lr': lr_transformer},
         {'params': bert_model.parameters(),         'lr': lr_bert},
         {'params': mobilevit_model.parameters(),    'lr': lr_mobilevit},
