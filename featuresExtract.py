@@ -148,7 +148,9 @@ def features_without_change(location, batch_size=500):
     # Preallocate Image Array
     # Assuming images are of fixed size (320, 480, 3)
     ## crop -> then resize to 0.6
-    new_size = (276, 180)
+    #new_size = (276, 180)
+    ## NEW RESIZING INTO 224*224
+    new_size = (224, 224)
     accumulated_images = np.empty((total_images, *new_size[::-1], 3), dtype=np.uint8)
     # bicubic interpolation
     # Fill Preallocated Array
