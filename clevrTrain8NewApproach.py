@@ -96,14 +96,30 @@ def collate_fn(batch, tokenizer=None):
 ############################################
 
 class SimpleCrossModalModel(nn.Module):
-    def __init__(self, vision_dim, text_dim, hidden_dim=256):
+    def __init__(self, vision_dim, text_dim, hidden_dim=256,dropout_rate=0.4):
         super().__init__()
-        # Project vision features -> hidden_dim
-        self.vision_fc = nn.Linear(vision_dim, hidden_dim)
-        # Project text features -> hidden_dim
-        self.text_fc = nn.Linear(text_dim, hidden_dim)
-        # Combine and classify
-        self.classifier = nn.Linear(2*hidden_dim, 1)
+        self.vision_fc = nn.Sequential(
+            nn.Linear(vision_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate=0.3),
+        )
+        self.text_fc = nn.Sequential(
+            nn.Linear(text_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+        )
+        # Then maybe:
+        self.classifier = nn.Sequential(
+            nn.Linear(2*hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(2*hidden_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(2*hidden_dim, 1)
+)
 
     def forward(self, vision_feats, text_feats):
         """
@@ -117,7 +133,7 @@ class SimpleCrossModalModel(nn.Module):
         v_proj = self.vision_fc(vision_feats)
         t_proj = self.text_fc(text_feats)
 
-        # Simple average or concat
+        # Simple cat
         fused = torch.cat([v_proj, t_proj], dim=1)  # (B, 2*hidden_dim)
 
         # Classify (binary)
@@ -158,7 +174,8 @@ def main():
     # Make sure final size is 224x224
     train_transforms = T.Compose([
         T.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.02),
-        T.RandomRotation(degrees=3),
+        T.RandomRotation(degrees=4),
+        T.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.9, 1.1)),
         T.RandomResizedCrop(224, scale=(0.9, 1.1)),
         T.ToTensor(),
     ])
