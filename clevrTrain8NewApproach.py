@@ -112,12 +112,12 @@ class SimpleCrossModalModel(nn.Module):
         )
         # Then maybe:
         self.classifier = nn.Sequential(
-            nn.Linear(2*hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(2*hidden_dim, 2*hidden_dim),
+            nn.BatchNorm1d(2*hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(2*hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(2*hidden_dim, 2*hidden_dim),
+            nn.BatchNorm1d(2*hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(2*hidden_dim, 1)
